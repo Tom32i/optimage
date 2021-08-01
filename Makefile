@@ -37,7 +37,7 @@ install:
 lint: lint-eslint
 
 lint-eslint:
-	npx eslint . --ext .js --fix
+	npx eslint optimage.js --ext .js --fix
 
 #######
 # NPM #

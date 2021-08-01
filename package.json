@@ -1,6 +1,6 @@
 {
   "name": "optimage-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Optimize images for the web",
   "author": "Thomas Jarrand <thomas.jarrand@gmail.com> (https://thomas.jarrand.fr)",
   "license": "MIT",
@@ -24,5 +24,8 @@
     "glob": "^7.1.7",
     "minimist": "^1.2.5",
     "sharp": "^0.28.3"
+  },
+  "devDependencies": {
+    "eslint": "^7.32.0"
   }
 }

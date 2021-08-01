@@ -2,68 +2,89 @@
 
 const sharp = require('sharp');
 const glob = require('glob');
-const argv = require('minimist')(process.argv.slice(2));
+const { _: args, config: configPath } = require('minimist')(process.argv.slice(2));
 
-const { _: arguments, config: configPath } = process.argv.slice(2);
+const [ path, ignore ] = args;
+const config = merge({
+    cache: {},
+    options: {},
+    png: {},
+    webp: {},
+    jpg: {},
+    gif: {},
+}, configPath ? require(configPath) : {});
 
-const [ path, ignore ] = arguments;
-const config = configPath ? require(configPath) : {};
+function merge(defaultConfig, passedConfig) {
+    const config = {};
 
-console.log(path, ignore, config);
-
-function optimizeAll(files, options = { quality: 80 }) {
-  const { length } = files;
-  let cores = sharp.concurrency();
-
-  console.info(`Optimizing ${length} files with ${cores} cores...`);
-
-  sharp.cache({ memory: 1000 });
-
-  const next = () => optimize(files.shift(), options, file => {
-    if (files.length) {
-      const treated = length - files.length;
-
-      process.stdout.clearLine();
-      process.stdout.cursorTo(0);
-      process.stdout.write(`File ${treated}/${length}: ${(treated/length * 100).toFixed(2)}%  -  ${file}`);
-
-      next();
-    } else {
-      cores--;
-
-      if (cores === 1) {
-        process.stdout.clearLine();
-        process.stdout.cursorTo(0);
-        console.info('Done!');
-      }
+    for (const [key, value] of Object.entries(defaultConfig)) {
+        config[key] = Object.assign(value, passedConfig[key] || {});
     }
-  });
 
-  for (let i = 0; i < cores; i++) {
-    next();
-  }
+    return config;
 }
 
-function optimize(file, options = {}, callback = undefined) {
-  const write = (error, buffer) => sharp(buffer).toFile(file, () => callback(file));
+function optimizeAll(files) {
+    const { cache } = config;
+    const { length } = files;
+    let cores = sharp.concurrency();
 
-  switch (file.split('.').pop()) {
+    console.info(`Optimizing ${length} files with ${cores} cores...`);
+
+    sharp.cache(cache);
+
+    const next = () => optimize(files.shift(), file => {
+        if (files.length) {
+            const treated = length - files.length;
+
+            process.stdout.clearLine();
+            process.stdout.cursorTo(0);
+            process.stdout.write(`File ${treated}/${length}: ${(treated/length * 100).toFixed(2)}%  -  ${file}`);
+
+            next();
+        } else {
+            cores--;
+
+            if (cores === 1) {
+                process.stdout.clearLine();
+                process.stdout.cursorTo(0);
+                console.info('Done!');
+            }
+        }
+    });
+
+    for (let i = 0; i < cores; i++) {
+        next();
+    }
+}
+
+function optimize(file, callback = undefined) {
+    const write = (error, buffer) => sharp(buffer).toFile(file, () => callback(file));
+    const { options, jpg, png, gif, webp } = config;
+
+    switch (file.split('.').pop()) {
     case 'jpeg':
     case 'jpg':
-      return sharp(file).jpeg(options).toBuffer(write);
+        return sharp(file).jpeg({ ...options, ...jpg }).toBuffer(write);
 
     case 'png':
-      return sharp(file).png({ compressionLevel: 9, ...options }).toBuffer(write);
+        return sharp(file).png({ ...options, ...png }).toBuffer(write);
 
     case 'gif':
-      return sharp(file).gif(options).toBuffer(write);
+        return sharp(file).gif({ ...options, ...gif }).toBuffer(write);
 
     case 'webp':
-      return sharp(file).webp({ /*lossless: true, reductionEffort: 6,*/ ...options }).toBuffer(write);
+        return sharp(file).webp({ ...options, ...webp }).toBuffer(write);
 
     default:
-      throw new Error(`Unsupported image type "${file}".`);
-  }
+        throw new Error(`Unsupported image type "${file}".`);
+    }
 }
 
-glob(path, { ignore }, (error, files) => optimizeAll(files));
+glob(path, { ignore }, (error, files) => {
+    if (error) {
+        throw new Error(error);
+    }
+
+    optimizeAll(files);
+});
