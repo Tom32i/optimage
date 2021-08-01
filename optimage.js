@@ -14,7 +14,7 @@ class Optimage {
             options: {},
             png: {},
             webp: {},
-            jpg: {},
+            jpeg: {},
             gif: {},
         }, load(configPath));
 
@@ -115,13 +115,13 @@ class Optimage {
     }
 
     optimize(file, callback) {
-        const { options, jpg, png, gif, webp } = this.config;
+        const { options, jpeg, png, gif, webp } = this.config;
         const write = (error, buffer) => sharp(buffer).toFile(file, () => callback(file));
 
         switch (file.split('.').pop()) {
             case 'jpeg':
             case 'jpg':
-                return sharp(file).jpeg({ ...options, ...jpg }).toBuffer(write);
+                return sharp(file).jpeg({ ...options, ...jpeg }).toBuffer(write);
 
             case 'png':
                 return sharp(file).png({ ...options, ...png }).toBuffer(write);
