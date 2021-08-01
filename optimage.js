@@ -2,89 +2,166 @@
 
 const sharp = require('sharp');
 const glob = require('glob');
-const { _: args, config: configPath } = require('minimist')(process.argv.slice(2));
 
-const [ path, ignore ] = args;
-const config = merge({
-    cache: {},
-    options: {},
-    png: {},
-    webp: {},
-    jpg: {},
-    gif: {},
-}, configPath ? require(configPath) : {});
+class Optimage {
+    constructor(path, ignore, configPath) {
+        const { load, merge } = this.constructor;
 
-function merge(defaultConfig, passedConfig) {
-    const config = {};
+        this.config = merge({
+            path,
+            ignore,
+            cache: {},
+            options: {},
+            png: {},
+            webp: {},
+            jpg: {},
+            gif: {},
+        }, load(configPath));
 
-    for (const [key, value] of Object.entries(defaultConfig)) {
-        config[key] = Object.assign(value, passedConfig[key] || {});
+        this.cores = sharp.concurrency();
+        this.length = 0;
+        this.files = null;
+
+        this.onFiles = this.onFiles.bind(this);
+        this.next = this.next.bind(this);
+
+        sharp.cache(this.config.cache);
     }
 
-    return config;
-}
+    static merge(defaultConfig, customConfig) {
+        const config = {};
 
-function optimizeAll(files) {
-    const { cache } = config;
-    const { length } = files;
-    let cores = sharp.concurrency();
-
-    console.info(`Optimizing ${length} files with ${cores} cores...`);
-
-    sharp.cache(cache);
-
-    const next = () => optimize(files.shift(), file => {
-        if (files.length) {
-            const treated = length - files.length;
-
-            process.stdout.clearLine();
-            process.stdout.cursorTo(0);
-            process.stdout.write(`File ${treated}/${length}: ${(treated/length * 100).toFixed(2)}%  -  ${file}`);
-
-            next();
-        } else {
-            cores--;
-
-            if (cores === 1) {
-                process.stdout.clearLine();
-                process.stdout.cursorTo(0);
-                console.info('Done!');
+        for (const [key, value] of Object.entries(defaultConfig)) {
+            if (typeof value === 'object') {
+                config[key] = Object.assign(value, customConfig[key] || {});
+            } else {
+                config[key] = value || customConfig[key];
             }
         }
-    });
 
-    for (let i = 0; i < cores; i++) {
-        next();
+        return config;
+    }
+
+    static load(path) {
+        if (!path) {
+            return {};
+        }
+
+        try {
+            return require(path);
+        }  catch (error) {
+
+        }
+
+        try {
+            return require(`${process.cwd()}/${path}`);
+        }  catch (error) {
+
+        }
+
+        throw new Error(`Could not load config file "${configPath}"`);
+    }
+
+    exec() {
+        const { path, ignore } = this.config;
+
+        if (!path) {
+            throw new Error('You must provide a path as first argument or through the "path" config key.');
+        }
+
+        glob(path, { ignore }, this.onFiles);
+    }
+
+    onFiles(error, files) {
+        if (error) {
+            throw new Error(error);
+        }
+
+        this.files = files;
+        this.length = files.length;
+
+        console.info(`Optimizing ${this.length} files with ${this.cores} cores...`);
+
+        for (let i = 0; i < this.cores; i++) {
+            setTimeout(this.next, 0);
+        }
+    }
+
+    next(file = undefined) {
+        const { length } = this.files;
+
+        // Previous treated file
+        if (file) {
+            const treated = this.length - length;
+
+            this.display(`File ${treated}/${length}: ${(treated/length * 100).toFixed(2)}%  -  ${file}`);
+        }
+
+        // Queue is empty
+        if (!length) {
+            this.cores--;
+
+            if (this.cores === 0) {
+                this.clear();
+                this.constructor.success('Done!');
+            }
+
+            return;
+        }
+
+        // Treat next file
+        this.optimize(this.files.shift(), this.next)
+    }
+
+    optimize(file, callback) {
+        const { options, jpg, png, gif, webp } = this.config;
+        const write = (error, buffer) => sharp(buffer).toFile(file, () => callback(file));
+
+        switch (file.split('.').pop()) {
+            case 'jpeg':
+            case 'jpg':
+                return sharp(file).jpeg({ ...options, ...jpg }).toBuffer(write);
+
+            case 'png':
+                return sharp(file).png({ ...options, ...png }).toBuffer(write);
+
+            case 'gif':
+                return sharp(file).gif({ ...options, ...gif }).toBuffer(write);
+
+            case 'webp':
+                return sharp(file).webp({ ...options, ...webp }).toBuffer(write);
+
+            default:
+                throw new Error(`Unsupported image type "${file}".`);
+        }
+    }
+
+    clear() {
+        process.stdout.clearLine();
+        process.stdout.cursorTo(0);
+    }
+
+    display(message) {
+        this.clear();
+        process.stdout.write(message);
+    }
+
+    static success(message) {
+        console.info(message);
+        process.exit(0);
+    }
+
+    static fail(message) {
+        console.error(message);
+        process.exit(1);
     }
 }
 
-function optimize(file, callback = undefined) {
-    const write = (error, buffer) => sharp(buffer).toFile(file, () => callback(file));
-    const { options, jpg, png, gif, webp } = config;
+const { _: args, config: configPath } = require('minimist')(process.argv.slice(2));
+const [ path, ignore ] = args;
 
-    switch (file.split('.').pop()) {
-    case 'jpeg':
-    case 'jpg':
-        return sharp(file).jpeg({ ...options, ...jpg }).toBuffer(write);
-
-    case 'png':
-        return sharp(file).png({ ...options, ...png }).toBuffer(write);
-
-    case 'gif':
-        return sharp(file).gif({ ...options, ...gif }).toBuffer(write);
-
-    case 'webp':
-        return sharp(file).webp({ ...options, ...webp }).toBuffer(write);
-
-    default:
-        throw new Error(`Unsupported image type "${file}".`);
-    }
+try {
+    (new Optimage(path, ignore, configPath)).exec();
+} catch (error) {
+    Optimage.fail(error);
 }
-
-glob(path, { ignore }, (error, files) => {
-    if (error) {
-        throw new Error(error);
-    }
-
-    optimizeAll(files);
-});
