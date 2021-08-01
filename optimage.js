@@ -88,17 +88,18 @@ class Optimage {
     }
 
     next(file = undefined) {
-        const { length } = this.files;
+        const { length: total } = this;
+        const { length: remainging } = this.files;
 
         // Previous treated file
         if (file) {
-            const treated = this.length - length;
+            const treated = total - remainging;
 
-            this.display(`File ${treated}/${length}: ${(treated/length * 100).toFixed(2)}%  -  ${file}`);
+            this.display(`File ${treated}/${total}: ${(treated/total * 100).toFixed(2)}%  -  ${file}`);
         }
 
         // Queue is empty
-        if (!length) {
+        if (!remainging) {
             this.cores--;
 
             if (this.cores === 0) {
