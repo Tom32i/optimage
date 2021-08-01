@@ -1,0 +1,28 @@
+{
+  "name": "optimage-cli",
+  "version": "0.1.0",
+  "description": "Optimize images for the web",
+  "author": "Thomas Jarrand <thomas.jarrand@gmail.com> (https://thomas.jarrand.fr)",
+  "license": "MIT",
+  "homepage": "https://github.com/Tom32i/optimage",
+  "keywords": [
+    "optimize",
+    "png",
+    "webp",
+    "jpg"
+  ],
+  "bin": {
+    "optimage-cli": "optimage.js"
+  },
+  "files": [
+    "optimage.js"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "glob": "^7.1.7",
+    "minimist": "^1.2.5",
+    "sharp": "^0.28.3"
+  }
+}
