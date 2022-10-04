@@ -50,13 +50,13 @@ class Optimage {
         try {
             return require(path);
         }  catch (error) {
-
+            console.error(error);
         }
 
         try {
             return require(`${process.cwd()}/${path}`);
         }  catch (error) {
-
+            console.error(error);
         }
 
         throw new Error(`Could not load config file "${configPath}"`);
@@ -111,7 +111,7 @@ class Optimage {
         }
 
         // Treat next file
-        this.optimize(this.files.shift(), this.next)
+        this.optimize(this.files.shift(), this.next);
     }
 
     optimize(file, callback) {
@@ -119,21 +119,21 @@ class Optimage {
         const write = (error, buffer) => sharp(buffer).toFile(file, () => callback(file));
 
         switch (file.split('.').pop()) {
-            case 'jpeg':
-            case 'jpg':
-                return sharp(file).jpeg({ ...options, ...jpeg }).toBuffer(write);
+        case 'jpeg':
+        case 'jpg':
+            return sharp(file).jpeg({ ...options, ...jpeg }).toBuffer(write);
 
-            case 'png':
-                return sharp(file).png({ ...options, ...png }).toBuffer(write);
+        case 'png':
+            return sharp(file).png({ ...options, ...png }).toBuffer(write);
 
-            case 'gif':
-                return sharp(file).gif({ ...options, ...gif }).toBuffer(write);
+        case 'gif':
+            return sharp(file).gif({ ...options, ...gif }).toBuffer(write);
 
-            case 'webp':
-                return sharp(file).webp({ ...options, ...webp }).toBuffer(write);
+        case 'webp':
+            return sharp(file).webp({ ...options, ...webp }).toBuffer(write);
 
-            default:
-                throw new Error(`Unsupported image type "${file}".`);
+        default:
+            throw new Error(`Unsupported image type "${file}".`);
         }
     }
 

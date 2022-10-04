@@ -34,6 +34,7 @@ install:
 # Lint #
 ########
 
+## Lint
 lint: lint-eslint
 
 lint-eslint:
@@ -43,6 +44,6 @@ lint-eslint:
 # NPM #
 #######
 
-# Publish package
+## Publish package
 publish:
 	npm publish . --access public
