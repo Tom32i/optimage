@@ -50,16 +50,12 @@ class Optimage {
         try {
             return require(path);
         }  catch (error) {
-            console.error(error);
+            try {
+                return require(`${process.cwd()}/${path}`);
+            }  catch (error) {
+                throw new Error(`Could not load config file "${configPath}"`);
+            }
         }
-
-        try {
-            return require(`${process.cwd()}/${path}`);
-        }  catch (error) {
-            console.error(error);
-        }
-
-        throw new Error(`Could not load config file "${configPath}"`);
     }
 
     exec() {
