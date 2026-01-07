@@ -112,25 +112,31 @@ class Optimage {
 
     optimize(file, callback) {
         const { options, jpeg, png, gif, webp } = this.config;
-        const write = (error, buffer) => sharp(buffer).toFile(file, () => callback(file));
+        const image = sharp(file);
 
-        switch (file.split('.').pop()) {
-        case 'jpeg':
-        case 'jpg':
-            return sharp(file).jpeg({ ...options, ...jpeg }).toBuffer(write);
+        image
+            .metadata()
+            .then(metadata => {
+                switch (metadata.format) {
+                case 'jpeg':
+                    return image.jpeg({ ...options, ...jpeg }).toBuffer();
 
-        case 'png':
-            return sharp(file).png({ ...options, ...png }).toBuffer(write);
+                case 'png':
+                    return image.png({ ...options, ...png }).toBuffer();
 
-        case 'gif':
-            return sharp(file).gif({ ...options, ...gif }).toBuffer(write);
+                case 'gif':
+                    return image.gif({ ...options, ...gif }).toBuffer();
 
-        case 'webp':
-            return sharp(file).webp({ ...options, ...webp }).toBuffer(write);
+                case 'webp':
+                    return image.webp({ ...options, ...webp }).toBuffer();
 
-        default:
-            throw new Error(`Unsupported image type "${file}".`);
-        }
+                default:
+                    throw new Error(`Unsupported image type "${file}".`);
+                }
+            })
+            .then(buffer => sharp(buffer).toFile(file))
+            .catch(error => console.error(error))
+            .finally(() => callback(file))
     }
 
     clear() {
