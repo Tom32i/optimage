@@ -2,6 +2,9 @@
 
 const sharp = require('sharp');
 const glob = require('glob');
+const fs = require('fs');
+const nodePath = require('path');
+const crypto = require('crypto');
 
 class Optimage {
     constructor(path, ignore, configPath) {
@@ -10,6 +13,7 @@ class Optimage {
         this.config = merge({
             path,
             ignore,
+            cacheDir: '',
             cache: {},
             options: {},
             png: {},
@@ -21,6 +25,26 @@ class Optimage {
         this.cores = sharp.concurrency();
         this.length = 0;
         this.files = null;
+
+        // Persistent, content-addressed optimization cache.
+        this.cacheDir = this.config.cacheDir || '';
+        this.liveKeys = new Set();
+        this.hits = 0;
+        this.misses = 0;
+
+        if (this.cacheDir) {
+            const { options, jpeg, png, gif, webp } = this.config;
+            const sharpVersion = require('sharp/package.json').version;
+
+            // Namespace the cache by the encode options + sharp version, so any
+            // change to quality/compression or a sharp upgrade invalidates it.
+            this.versionHash = crypto.createHash('md5')
+                .update(sharpVersion + JSON.stringify({ options, jpeg, png, gif, webp }))
+                .digest('hex');
+            this.versionDir = nodePath.join(this.cacheDir, this.versionHash);
+
+            fs.mkdirSync(this.versionDir, { recursive: true });
+        }
 
         this.onFiles = this.onFiles.bind(this);
         this.next = this.next.bind(this);
@@ -100,6 +124,15 @@ class Optimage {
 
             if (this.cores === 0) {
                 this.clear();
+
+                if (this.cacheDir) {
+                    this.prune();
+
+                    const ratio = total ? (this.hits / total * 100).toFixed(2) : '0.00';
+
+                    console.info(`Restored ${this.hits}/${total} (${ratio}%) from cache, optimized ${this.misses}.`);
+                }
+
                 this.constructor.success('Done!');
             }
 
@@ -110,11 +143,10 @@ class Optimage {
         this.optimize(this.files.shift(), this.next);
     }
 
-    optimize(file, callback) {
+    encode(file, image) {
         const { options, jpeg, png, gif, webp } = this.config;
-        const image = sharp(file);
 
-        image
+        return image
             .metadata()
             .then(metadata => {
                 switch (metadata.format) {
@@ -134,17 +166,87 @@ class Optimage {
                     throw new Error(`Unsupported image type "${file}".`);
                 }
             })
-            .then(buffer => sharp(buffer).toFile(file))
+            .then(buffer => sharp(buffer).toBuffer());
+    }
+
+    optimize(file, callback) {
+        if (!this.cacheDir) {
+            this.encode(file, sharp(file))
+                .then(buffer => fs.promises.writeFile(file, buffer))
+                .catch(error => console.error(error))
+                .finally(() => callback(file));
+
+            return;
+        }
+
+        let input;
+
+        try {
+            input = fs.readFileSync(file);
+        } catch (error) {
+            console.error(error);
+
+            return callback(file);
+        }
+
+        const key = crypto.createHash('md5').update(input).digest('hex');
+        const cachePath = nodePath.join(this.versionDir, key);
+
+        this.liveKeys.add(key);
+
+        // Cache hit: restore the previously optimized bytes, skip sharp entirely.
+        if (fs.existsSync(cachePath)) {
+            try {
+                fs.copyFileSync(cachePath, file);
+                this.hits++;
+            } catch (error) {
+                console.error(error);
+            }
+
+            return callback(file);
+        }
+
+        // Cache miss: optimize, then write to both the target file and the cache.
+        this.misses++;
+
+        this.encode(file, sharp(input))
+            .then(buffer => Promise.all([
+                fs.promises.writeFile(file, buffer),
+                fs.promises.writeFile(cachePath, buffer),
+            ]))
             .catch(error => console.error(error))
-            .finally(() => callback(file))
+            .finally(() => callback(file));
+    }
+
+    prune() {
+        // Drop stale version directories (changed options or sharp version).
+        for (const entry of fs.readdirSync(this.cacheDir)) {
+            if (entry !== this.versionHash) {
+                fs.rmSync(nodePath.join(this.cacheDir, entry), { recursive: true, force: true });
+            }
+        }
+
+        // Drop entries in the current version that weren't referenced this run.
+        for (const entry of fs.readdirSync(this.versionDir)) {
+            if (!this.liveKeys.has(entry)) {
+                fs.rmSync(nodePath.join(this.versionDir, entry), { force: true });
+            }
+        }
     }
 
     clear() {
-        process.stdout.clearLine();
-        process.stdout.cursorTo(0);
+        // Only available on a TTY; skip when output is piped (CI, build logs).
+        if (process.stdout.isTTY) {
+            process.stdout.clearLine();
+            process.stdout.cursorTo(0);
+        }
     }
 
     display(message) {
+        if (!process.stdout.isTTY) {
+            return;
+        }
+
         this.clear();
         process.stdout.write(message);
     }
