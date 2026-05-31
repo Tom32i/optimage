@@ -2,25 +2,55 @@
 
 const sharp = require('sharp');
 const glob = require('glob');
+const fs = require('fs');
+const nodePath = require('path');
+const crypto = require('crypto');
 
 class Optimage {
     constructor(path, ignore, configPath) {
         const { load, merge } = this.constructor;
+        const customConfig = load(configPath);
 
         this.config = merge({
             path,
             ignore,
+            cacheDir: '',
             cache: {},
             options: {},
             png: {},
             webp: {},
             jpeg: {},
             gif: {},
-        }, load(configPath));
+        }, customConfig);
 
         this.cores = sharp.concurrency();
         this.length = 0;
         this.files = null;
+
+        // Persistent, content-addressed optimization cache.
+        this.cacheDir = this.config.cacheDir || '';
+        this.liveKeys = new Set();
+        this.hits = 0;
+        this.misses = 0;
+
+        // Pruning drops cache entries not referenced this run. Disable it with
+        // `"pruneCache": false` when several runs share one cacheDir over
+        // partial image sets, so they don't delete each other's entries.
+        this.pruneCache = customConfig.pruneCache !== false;
+
+        if (this.cacheDir) {
+            const { options, jpeg, png, gif, webp } = this.config;
+            const sharpVersion = require('sharp/package.json').version;
+
+            // Namespace the cache by the encode options + sharp version, so any
+            // change to quality/compression or a sharp upgrade invalidates it.
+            this.versionHash = crypto.createHash('md5')
+                .update(sharpVersion + JSON.stringify({ options, jpeg, png, gif, webp }))
+                .digest('hex');
+            this.versionDir = nodePath.join(this.cacheDir, this.versionHash);
+
+            fs.mkdirSync(this.versionDir, { recursive: true });
+        }
 
         this.onFiles = this.onFiles.bind(this);
         this.next = this.next.bind(this);
@@ -53,7 +83,7 @@ class Optimage {
             try {
                 return require(`${process.cwd()}/${path}`);
             }  catch (error) {
-                throw new Error(`Could not load config file "${configPath}"`);
+                throw new Error(`Could not load config file "${path}"`);
             }
         }
     }
@@ -100,6 +130,21 @@ class Optimage {
 
             if (this.cores === 0) {
                 this.clear();
+
+                if (this.cacheDir) {
+                    if (this.pruneCache) {
+                        this.prune();
+                    }
+
+                    const ratio = total ? (this.hits / total * 100).toFixed(2) : '0.00';
+
+                    console.info(`Restored ${this.hits}/${total} (${ratio}%) from cache, optimized ${this.misses}.`);
+
+                    if (this.hits === 0) {
+                        console.warn('No files were restored from cache. Caching only helps when source bytes are regenerated between runs — see the Caching section of the README.');
+                    }
+                }
+
                 this.constructor.success('Done!');
             }
 
@@ -110,11 +155,10 @@ class Optimage {
         this.optimize(this.files.shift(), this.next);
     }
 
-    optimize(file, callback) {
+    encode(file, image) {
         const { options, jpeg, png, gif, webp } = this.config;
-        const image = sharp(file);
 
-        image
+        return image
             .metadata()
             .then(metadata => {
                 switch (metadata.format) {
@@ -133,18 +177,78 @@ class Optimage {
                 default:
                     throw new Error(`Unsupported image type "${file}".`);
                 }
+            });
+    }
+
+    optimize(file, callback) {
+        if (!this.cacheDir) {
+            this.encode(file, sharp(file))
+                .then(buffer => fs.promises.writeFile(file, buffer))
+                .catch(error => console.error(error))
+                .finally(() => callback(file));
+
+            return;
+        }
+
+        // Stay promise-based on every path so `callback` always runs in a later
+        // microtask: a long run of synchronous cache hits would otherwise recurse
+        // (optimize -> callback -> optimize ...) and overflow the call stack.
+        fs.promises.readFile(file)
+            .then(input => {
+                const key = crypto.createHash('md5').update(input).digest('hex');
+                const cachePath = nodePath.join(this.versionDir, key);
+
+                this.liveKeys.add(key);
+
+                // Cache hit: restore the previously optimized bytes, skip sharp.
+                if (fs.existsSync(cachePath)) {
+                    this.hits++;
+
+                    return fs.promises.copyFile(cachePath, file);
+                }
+
+                // Cache miss: optimize, then write to the file and the cache.
+                this.misses++;
+
+                return this.encode(file, sharp(input))
+                    .then(buffer => Promise.all([
+                        fs.promises.writeFile(file, buffer),
+                        fs.promises.writeFile(cachePath, buffer),
+                    ]));
             })
-            .then(buffer => sharp(buffer).toFile(file))
             .catch(error => console.error(error))
-            .finally(() => callback(file))
+            .finally(() => callback(file));
+    }
+
+    prune() {
+        // Drop stale version directories (changed options or sharp version).
+        for (const entry of fs.readdirSync(this.cacheDir)) {
+            if (entry !== this.versionHash) {
+                fs.rmSync(nodePath.join(this.cacheDir, entry), { recursive: true, force: true });
+            }
+        }
+
+        // Drop entries in the current version that weren't referenced this run.
+        for (const entry of fs.readdirSync(this.versionDir)) {
+            if (!this.liveKeys.has(entry)) {
+                fs.rmSync(nodePath.join(this.versionDir, entry), { force: true });
+            }
+        }
     }
 
     clear() {
-        process.stdout.clearLine();
-        process.stdout.cursorTo(0);
+        // Only available on a TTY; skip when output is piped (CI, build logs).
+        if (process.stdout.isTTY) {
+            process.stdout.clearLine();
+            process.stdout.cursorTo(0);
+        }
     }
 
     display(message) {
+        if (!process.stdout.isTTY) {
+            return;
+        }
+
         this.clear();
         process.stdout.write(message);
     }
