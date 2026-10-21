@@ -73,11 +73,11 @@ class Optimage {
 
         try {
             return require(path);
-        }  catch (error) {
+        }  catch {
             try {
                 return require(`${process.cwd()}/${path}`);
             }  catch (error) {
-                throw new Error(`Could not load config file "${configPath}"`);
+                throw new Error(`Could not load config file "${path}"`, { cause: error });
             }
         }
     }

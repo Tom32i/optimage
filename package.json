@@ -23,9 +23,11 @@
   "dependencies": {
     "glob": "^7.1.7",
     "minimist": "^1.2.5",
-    "sharp": "^0.33.2"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "eslint": "^7.32.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0"
   }
 }
