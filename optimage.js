@@ -201,6 +201,15 @@ class Optimage {
         // microtask: a long run of skipped files would otherwise recurse
         // (optimize -> callback -> optimize ...) and overflow the call stack.
         sharp(file).metadata()
+            // A file that isn't an image at all, such as a .gitignore matched by
+            // the path pattern, is skipped like any other format.
+            .catch(error => {
+                if (error.message.includes('unsupported image format')) {
+                    return {};
+                }
+
+                throw error;
+            })
             .then(({ format }) => {
                 if (!this.formats.includes(format)) {
                     this.skipped++;
