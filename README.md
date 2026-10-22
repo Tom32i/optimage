@@ -85,7 +85,8 @@ How it works:
 
 - Each file is keyed by an `md5` of its current (pre-optimization) bytes. On a cache **hit**, the previously optimized bytes are restored and `sharp` is skipped entirely; on a **miss**, the file is optimized and the result is written to both the file and the cache.
 - The cache is namespaced by a hash of the encode options and the installed `sharp` version, so changing quality/compression settings or upgrading `sharp` invalidates it automatically.
-- After each run the cache is **pruned**: entries not referenced during the run (and stale option/version namespaces) are deleted, keeping it bounded to the current image set.
+- Cache entries are written to a temporary file and then renamed, so an interrupted run never leaves a truncated entry behind.
+- After each run the cache is **pruned**: entries not referenced during the run (and stale option/version namespaces) are deleted, keeping it bounded to the current image set. Only the cache's own md5-named folders are removed from `cacheDir`; anything else in it is left alone.
 
 > **One image set per `cacheDir`.** Pruning assumes a single run covers the whole set. If you run `optimage` over *partial* sets that share one `cacheDir` (e.g. one run per subfolder), each run deletes the entries it didn't touch, and concurrent runs with different encode options wipe each other's namespaces. For those workflows set `"pruneCache": false` (and clean the cache yourself when needed), or give each set its own `cacheDir`.
 

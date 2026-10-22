@@ -50,6 +50,9 @@ class Optimage {
             this.versionDir = nodePath.join(this.cacheDir, this.versionHash);
 
             fs.mkdirSync(this.versionDir, { recursive: true });
+
+            // A first run on an empty cache is expected to miss everything.
+            this.cacheWasEmpty = fs.readdirSync(this.versionDir).length === 0;
         }
 
         this.onFiles = this.onFiles.bind(this);
@@ -140,7 +143,7 @@ class Optimage {
 
                     console.info(`Restored ${this.hits}/${total} (${ratio}%) from cache, optimized ${this.misses}.`);
 
-                    if (this.hits === 0) {
+                    if (this.hits === 0 && !this.cacheWasEmpty) {
                         console.warn('No files were restored from cache. Caching only helps when source bytes are regenerated between runs — see the Caching section of the README.');
                     }
                 }
@@ -213,17 +216,27 @@ class Optimage {
                 return this.encode(file, sharp(input))
                     .then(buffer => Promise.all([
                         fs.promises.writeFile(file, buffer),
-                        fs.promises.writeFile(cachePath, buffer),
+                        this.writeCache(cachePath, buffer),
                     ]));
             })
             .catch(error => console.error(error))
             .finally(() => callback(file));
     }
 
+    writeCache(cachePath, buffer) {
+        // Write to a temporary file, then rename it: an interrupted run must not
+        // leave a truncated entry that later runs would restore as a broken image.
+        const tmpPath = `${cachePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+
+        return fs.promises.writeFile(tmpPath, buffer)
+            .then(() => fs.promises.rename(tmpPath, cachePath));
+    }
+
     prune() {
         // Drop stale version directories (changed options or sharp version).
+        // Only touch md5-named entries, in case cacheDir holds anything else.
         for (const entry of fs.readdirSync(this.cacheDir)) {
-            if (entry !== this.versionHash) {
+            if (entry !== this.versionHash && /^[0-9a-f]{32}$/.test(entry)) {
                 fs.rmSync(nodePath.join(this.cacheDir, entry), { recursive: true, force: true });
             }
         }
