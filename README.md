@@ -36,8 +36,9 @@ Optimize all png and jpeg image files in `./images` exept those in the `./images
 
 | Entry | Description |
 | ----- | ----------- |
-| `cacheDir` | Path to a persistent on-disk cache directory. When set, optimized output is cached by input content so unchanged files are restored instead of re-optimized. See [Caching](#caching). |
-| `pruneCache` | Defaults to `true`. After each run, cache entries not referenced during that run are deleted. Set to `false` when several runs share one `cacheDir` over different image sets (see [Caching](#caching)). |
+| `formats` | Image formats to optimize, detected from the file contents. Files in other formats are left untouched. Defaults to `["jpeg", "png", "gif", "webp"]`. |
+| `cacheDir` | Path to a directory where optimage records the files it has already optimized, so later runs skip them. See [Caching](#caching). |
+| `pruneCache` | Defaults to `true`. After each run, records of files not seen during that run are deleted. Set to `false` when several runs share one `cacheDir` over different image sets (see [Caching](#caching)). |
 | `cache` | [Sharp cache configuration](https://sharp.pixelplumbing.com/api-utility#cache) |
 | `options` | [Sharp images options (applied to all formats)](https://sharp.pixelplumbing.com/api-utility#cache) |
 | `jpeg` | [Sharp jpeg options](https://sharp.pixelplumbing.com/api-output#jpeg) |
@@ -71,10 +72,12 @@ Optimize all png and jpeg image files in `./images` exept those in the `./images
 
 ## Caching
 
-Optimization is a pure function of the input bytes and the encode options, so identical inputs always produce identical output. Set `cacheDir` to skip re-optimizing files that haven't changed:
+When optimage rewrites files in place and those files are kept between runs (a thumbnail cache, a folder of generated assets), each run would encode every file again, including the ones a previous run already optimized. Re-encoding is slow, and for lossy formats it lowers the quality each time. Set `cacheDir` to only optimize the files that are new or changed:
 
 ```json
 {
+  "path": "var/thumbnails/**/*",
+  "formats": ["png", "jpeg"],
   "cacheDir": "var/optimage-cache",
   "options": { "quality": 80 },
   "png": { "compressionLevel": 9 }
@@ -83,13 +86,12 @@ Optimization is a pure function of the input bytes and the encode options, so id
 
 How it works:
 
-- Each file is keyed by an `md5` of its current (pre-optimization) bytes. On a cache **hit**, the previously optimized bytes are restored and `sharp` is skipped entirely; on a **miss**, the file is optimized and the result is written to both the file and the cache.
-- The cache is namespaced by a hash of the encode options and the installed `sharp` version, so changing quality/compression settings or upgrading `sharp` invalidates it automatically.
-- Cache entries are written to a temporary file and then renamed, so an interrupted run never leaves a truncated entry behind.
-- After each run the cache is **pruned**: entries not referenced during the run (and stale option/version namespaces) are deleted, keeping it bounded to the current image set. Only the cache's own md5-named folders are removed from `cacheDir`; anything else in it is left alone.
+- When optimage optimizes a file, it records the `md5` of the optimized bytes as an empty file in `cacheDir`. It stores no copy of the image.
+- On later runs, a file whose `md5` is recorded is skipped: it is already optimized. Any other file is optimized and recorded.
+- The records are namespaced by a hash of the encode options, the formats and the installed `sharp` version, so changing settings or upgrading `sharp` optimizes everything again.
+- Files are replaced through a temporary file and a rename, and a record is written before its file is replaced. An interrupted run never leaves a truncated image, and never makes a later run encode a file twice.
+- After each run the cache is **pruned**: records of files not seen during the run, and stale namespaces, are deleted. Only the cache's own md5-named folders are removed from `cacheDir`; anything else in it is left alone.
 
-> **One image set per `cacheDir`.** Pruning assumes a single run covers the whole set. If you run `optimage` over *partial* sets that share one `cacheDir` (e.g. one run per subfolder), each run deletes the entries it didn't touch, and concurrent runs with different encode options wipe each other's namespaces. For those workflows set `"pruneCache": false` (and clean the cache yourself when needed), or give each set its own `cacheDir`.
+> **One image set per `cacheDir`.** Pruning assumes a single run covers the whole set. If you run `optimage` over *partial* sets that share one `cacheDir` (e.g. one run per subfolder), each run deletes the records it didn't see, and concurrent runs with different encode options wipe each other's namespaces. For those workflows set `"pruneCache": false` (and clean the cache yourself when needed), or give each set its own `cacheDir`.
 
-This is most effective when a build step regenerates the same files in place before optimizing (e.g. a static-site build that re-emits identical image variants every build): the first run is a full optimize, and subsequent runs restore unchanged images near-instantly.
-
-> **Note:** Caching only helps when the optimizer runs against freshly (re)generated source bytes. Running `optimage` repeatedly over its *own* output changes the input each time and will always miss — point the cache at a build that restores the original generated bytes before each run.
+> **Note:** The cache only helps when the optimized files are kept between runs. If a build step writes fresh, unoptimized files before each run, nothing is ever recorded as optimized: run optimage on the files the build copies from instead.
