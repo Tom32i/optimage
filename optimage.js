@@ -40,7 +40,7 @@ class Optimage {
 
         if (this.cacheDir) {
             const { options, jpeg, png, gif, webp } = this.config;
-            const sharpVersion = require('sharp/package.json').version;
+            const sharpVersion = sharp.versions.sharp;
 
             // Namespace the cache by the encode options + sharp version, so any
             // change to quality/compression or a sharp upgrade invalidates it.
