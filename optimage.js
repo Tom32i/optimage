@@ -9,6 +9,7 @@ const crypto = require('crypto');
 class Optimage {
     constructor(path, ignore, configPath) {
         const { load, merge } = this.constructor;
+        const customConfig = load(configPath);
 
         this.config = merge({
             path,
@@ -20,7 +21,7 @@ class Optimage {
             webp: {},
             jpeg: {},
             gif: {},
-        }, load(configPath));
+        }, customConfig);
 
         this.cores = sharp.concurrency();
         this.length = 0;
@@ -31,6 +32,11 @@ class Optimage {
         this.liveKeys = new Set();
         this.hits = 0;
         this.misses = 0;
+
+        // Pruning drops cache entries not referenced this run. Disable it with
+        // `"pruneCache": false` when several runs share one cacheDir over
+        // partial image sets, so they don't delete each other's entries.
+        this.pruneCache = customConfig.pruneCache !== false;
 
         if (this.cacheDir) {
             const { options, jpeg, png, gif, webp } = this.config;
@@ -126,11 +132,17 @@ class Optimage {
                 this.clear();
 
                 if (this.cacheDir) {
-                    this.prune();
+                    if (this.pruneCache) {
+                        this.prune();
+                    }
 
                     const ratio = total ? (this.hits / total * 100).toFixed(2) : '0.00';
 
                     console.info(`Restored ${this.hits}/${total} (${ratio}%) from cache, optimized ${this.misses}.`);
+
+                    if (this.hits === 0) {
+                        console.warn('No files were restored from cache. Caching only helps when source bytes are regenerated between runs — see the Caching section of the README.');
+                    }
                 }
 
                 this.constructor.success('Done!');
@@ -165,8 +177,7 @@ class Optimage {
                 default:
                     throw new Error(`Unsupported image type "${file}".`);
                 }
-            })
-            .then(buffer => sharp(buffer).toBuffer());
+            });
     }
 
     optimize(file, callback) {
@@ -179,41 +190,32 @@ class Optimage {
             return;
         }
 
-        let input;
+        // Stay promise-based on every path so `callback` always runs in a later
+        // microtask: a long run of synchronous cache hits would otherwise recurse
+        // (optimize -> callback -> optimize ...) and overflow the call stack.
+        fs.promises.readFile(file)
+            .then(input => {
+                const key = crypto.createHash('md5').update(input).digest('hex');
+                const cachePath = nodePath.join(this.versionDir, key);
 
-        try {
-            input = fs.readFileSync(file);
-        } catch (error) {
-            console.error(error);
+                this.liveKeys.add(key);
 
-            return callback(file);
-        }
+                // Cache hit: restore the previously optimized bytes, skip sharp.
+                if (fs.existsSync(cachePath)) {
+                    this.hits++;
 
-        const key = crypto.createHash('md5').update(input).digest('hex');
-        const cachePath = nodePath.join(this.versionDir, key);
+                    return fs.promises.copyFile(cachePath, file);
+                }
 
-        this.liveKeys.add(key);
+                // Cache miss: optimize, then write to the file and the cache.
+                this.misses++;
 
-        // Cache hit: restore the previously optimized bytes, skip sharp entirely.
-        if (fs.existsSync(cachePath)) {
-            try {
-                fs.copyFileSync(cachePath, file);
-                this.hits++;
-            } catch (error) {
-                console.error(error);
-            }
-
-            return callback(file);
-        }
-
-        // Cache miss: optimize, then write to both the target file and the cache.
-        this.misses++;
-
-        this.encode(file, sharp(input))
-            .then(buffer => Promise.all([
-                fs.promises.writeFile(file, buffer),
-                fs.promises.writeFile(cachePath, buffer),
-            ]))
+                return this.encode(file, sharp(input))
+                    .then(buffer => Promise.all([
+                        fs.promises.writeFile(file, buffer),
+                        fs.promises.writeFile(cachePath, buffer),
+                    ]));
+            })
             .catch(error => console.error(error))
             .finally(() => callback(file));
     }
